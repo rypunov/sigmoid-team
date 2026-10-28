@@ -64,13 +64,13 @@ class EOSNormalizer:
 
 def split_and_prepare(ds: dict, random_state=42):
     """
-    Делит данные на train/test (90/10), нормализует их и возвращает словарь.
+    Делит данные на train/test (80/20), нормализует их и возвращает словарь.
     """
     n_total = len(ds["rho"])
     indices = np.arange(n_total)
 
-    # 1. Разбиваем на train (90%) и test (10%)
-    idx_train, idx_test = train_test_split(indices, test_size=0.1, random_state=random_state)
+    # 1. Разбиваем на train (80%) и test (20%)
+    idx_train, idx_test = train_test_split(indices, test_size=0.2, random_state=random_state)
 
     # 2. Инициализируем нормализатор и фитим его ТОЛЬКО на train
     normalizer = EOSNormalizer()
