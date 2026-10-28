@@ -10,16 +10,26 @@ import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
 
-from config import MODEL_FILE, SEED, EPOCHS, LR, BATCH_SIZE, DEVICE
+from config import MODEL_FILE
 from data_loader import load_flat_dataset
 from preprocessor import split_and_prepare
 from MLP import MLP
 
-# ОБУЧЕНИЕ
+# ПАРАМЕТРЫ ОБУЧЕНИЯ
+SEED = 42
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+EPOCHS = 10000
+BATCH_SIZE = 4096
+LR = 1e-3
+
+# ОБУЧЕНИЕ
 def train_model(model, X_train, Y_train, X_test, Y_test):
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     loss_fn = nn.MSELoss()
+
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9 ** (1 / 1000))
+
     n = len(X_train)
     train_losses, test_losses = [], []
 
@@ -27,33 +37,39 @@ def train_model(model, X_train, Y_train, X_test, Y_test):
         model.train()
         perm = torch.randperm(n, device=DEVICE)
         total = 0.0
+
         for i in range(0, n, BATCH_SIZE):
             idx = perm[i:i + BATCH_SIZE]
             loss = loss_fn(model(X_train[idx]), Y_train[idx])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            scheduler.step()
+
             total += loss.item() * len(idx)
+
         train_losses.append(total / n)
 
         model.eval()
         with torch.no_grad():
             test_losses.append(loss_fn(model(X_test), Y_test).item())
 
-        if epoch == 1 or epoch % 50 == 0:
-            print(f"Эпоха {epoch:4d}/{EPOCHS} | train MSE={train_losses[-1]:.3e} | test MSE={test_losses[-1]:.3e}")
+        if epoch == 1 or epoch % 1000 == 0:
+            current_lr = scheduler.get_last_lr()[0]
+            print(f"Эпоха {epoch:5d}/{EPOCHS} | train MSE={train_losses[-1]:.3e} | test MSE={test_losses[-1]:.3e} | LR={current_lr:.2e}")
 
     torch.save(model.state_dict(), MODEL_FILE)
     print(f"Веса сохранены в {MODEL_FILE}")
     return train_losses, test_losses
 
-# ПРОИЗВОДНЫЕ 
+# ПРОИЗВОДНЫЕ
 def compute_derivatives(model, X, n_points=5):
     model.eval()
     idx = torch.randperm(len(X), device=DEVICE)[:n_points]
     x = X[idx].clone().requires_grad_(True)
     y = model(x)
-    
+
     grads = []
     for k in range(2): # k=0 -> P, k=1 -> e
         g = torch.autograd.grad(y[:, k].sum(), x, retain_graph=True)[0]
@@ -70,8 +86,7 @@ def print_derivatives(points, grads):
         print(f"   dP/drho_norm = {g[0, 0]: .5f}   dP/dT_norm = {g[0, 1]: .5f}")
         print(f"   dE/drho_norm = {g[1, 0]: .5f}   dE/dT_norm = {g[1, 1]: .5f}")
 
-#  ВИЗУАЛИЗАЦИЯ 
-
+# ВИЗУАЛИЗАЦИЯ
 def plot_learning_curve(train_losses, test_losses):
     plt.figure(figsize=(7, 4))
     plt.plot(range(1, len(train_losses) + 1), train_losses, label="Train")
@@ -91,9 +106,8 @@ def plot_error_heatmap(model, X_test, Y_test, normalizer):
     with torch.no_grad():
         pred = model(X_test)
     err = (pred - Y_test).abs().cpu().numpy()
-    
+
     x_np = X_test.cpu().numpy()
-    # Восстанавливаем оси для графика (T без логарифма, rho через 10^x)
     log_rho = x_np[:, 0] * normalizer.params["rho"]["std"] + normalizer.params["rho"]["mean"]
     T_val = x_np[:, 1] * normalizer.params["T"]["std"] + normalizer.params["T"]["mean"]
 
@@ -117,8 +131,7 @@ def plot_violation_map(model, X_test, normalizer):
 
     y_np = y.detach().cpu().numpy()
     x_np = x.detach().cpu().numpy()
-    
-    # Обратный пересчет P (через логарифм) и E (без логарифма)
+
     P_phys = np.power(10.0, y_np[:, 0] * normalizer.params["P"]["std"] + normalizer.params["P"]["mean"]) - 1e-12
     e_phys = y_np[:, 1] * normalizer.params["E"]["std"] + normalizer.params["E"]["mean"]
 
@@ -151,25 +164,23 @@ def plot_violation_map(model, X_test, normalizer):
     plt.show()
 
 # ЗАПУСК
-
 if __name__ == "__main__":
     torch.manual_seed(SEED)
     np.random.seed(SEED)
     print("Устройство:", DEVICE)
 
-
+    print("Загрузка данных")
     ds = load_flat_dataset()
 
+    print("Разбиение и нормализация")
     prepared = split_and_prepare(ds)
-    
-    
+
     try:
         X_train = prepared["train"]["X"].to(DEVICE)
         Y_train = prepared["train"]["Y"].to(DEVICE)
         X_test = prepared["test"]["X"].to(DEVICE)
         Y_test = prepared["test"]["Y"].to(DEVICE)
     except TypeError:
-        # Если вернулись кортежи (X, Y)
         X_train, Y_train = prepared["train"]
         X_test, Y_test = prepared["test"]
         X_train, Y_train = X_train.to(DEVICE), Y_train.to(DEVICE)
@@ -177,14 +188,12 @@ if __name__ == "__main__":
 
     normalizer = prepared["normalizer"]
 
-
     model = MLP(in_dim=2, out_dim=2, width=64, depth=4).to(DEVICE)
-    
 
-    print("обучение")
+    print("10 000 эпох")
     train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test)
 
-
+    print("Производные")
     pts, grads = compute_derivatives(model, X_test, n_points=5)
     print_derivatives(pts, grads)
 
