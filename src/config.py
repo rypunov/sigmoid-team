@@ -29,3 +29,6 @@ E_UNITS = "kJ/g"  # Внимание: в ТЗ просят эВ/атом, но �
 USE_LOG_RHO = True
 USE_LOG_P = True
 # E имеет отрицательные значения -> используем MinMax или StandardScaler
+
+# Имя файла для сохранения весов Vanilla-модели
+MODEL_FILE = MODEL_DIR / "vanilla_model.pth"
