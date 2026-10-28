@@ -4,6 +4,9 @@
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+import json
+import os
+import time
 
 import torch
 import torch.nn as nn
@@ -163,6 +166,68 @@ def plot_violation_map(model, X_test, normalizer):
     plt.savefig("violation_map_vanilla.png", dpi=150)
     plt.show()
 
+
+# МЕТРИКИ ДЛЯ ТАБЛИЦЫ
+def evaluate_vanilla(model, X_test, Y_test, normalizer, n_speed=100_000,
+                     out_path="vanilla_metrics.json"):
+    p = normalizer.params
+    model.eval()
+
+    with torch.no_grad():
+        pred = model(X_test).cpu().numpy()
+    true = Y_test.cpu().numpy()
+
+    # физические единицы
+    P_pred = np.power(10.0, pred[:, 0] * p["P"]["std"] + p["P"]["mean"]) - 1e-12
+    P_true = np.power(10.0, true[:, 0] * p["P"]["std"] + p["P"]["mean"]) - 1e-12
+    E_pred = pred[:, 1] * p["E"]["std"] + p["E"]["mean"]
+    E_true = true[:, 1] * p["E"]["std"] + p["E"]["mean"]
+
+    # MAPE
+    mape_P = np.mean(np.abs((P_pred - P_true) / np.abs(P_true))) * 100
+    mape_E = np.mean(np.abs((E_pred - E_true) / np.abs(E_true))) * 100
+
+    # R2 по P в лог-шкале (P меняется на 12 порядков)
+    ss_res = np.sum((true[:, 0] - pred[:, 0]) ** 2)
+    ss_tot = np.sum((true[:, 0] - true[:, 0].mean()) ** 2)
+    r2_P = 1 - ss_res / ss_tot
+
+    # скорость
+    x = X_test[:n_speed]
+    with torch.no_grad():
+        model(x)  # прогрев
+        if DEVICE == "cuda":
+            torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        model(x)
+        if DEVICE == "cuda":
+            torch.cuda.synchronize()
+        dt = time.perf_counter() - t0
+    speed = len(x) / dt
+
+    # размер
+    size_mb = os.path.getsize(MODEL_FILE) / 1024 ** 2
+
+    res = {
+        "MAPE_P_percent": float(mape_P),
+        "MAPE_E_percent": float(mape_E),
+        "R2_P": float(r2_P),
+        "size_mb": float(size_mb),
+        "speed_queries_per_sec": float(speed),
+    }
+
+    print("\n Метрики Vanilla (для итоговой таблицы) ")
+    print(f"MAPE P (%):        {mape_P:.4f}")
+    print(f"MAPE E (%):        {mape_E:.4f}")
+    print(f"R2 (P):            {r2_P:.4f}")
+    print(f"Размер (МБ):       {size_mb:.4f}")
+    print(f"Скорость (зап/с):  {speed:,.0f}")
+
+    with open(out_path, "w") as f:
+        json.dump(res, f, indent=2)
+    return res
+
+
 # ЗАПУСК
 if __name__ == "__main__":
     torch.manual_seed(SEED)
@@ -200,3 +265,6 @@ if __name__ == "__main__":
     plot_learning_curve(train_losses, test_losses)
     plot_error_heatmap(model, X_test, Y_test, normalizer)
     plot_violation_map(model, X_test, normalizer)
+
+
+    evaluate_vanilla(model, X_test, Y_test, normalizer)
