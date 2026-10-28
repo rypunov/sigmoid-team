@@ -228,6 +228,21 @@ def evaluate_vanilla(model, X_test, Y_test, normalizer, n_speed=100_000,
     return res
 
 
+def save_to_torchscript(model, device, out_path="model_scripted.pt"):
+    """
+    Сохраняет модель в TorchScript.
+    """
+    print(f"\nЭкспорт в TorchScript: {out_path}")
+    model.eval()
+    dummy_input = torch.randn(1, 2, device=device)
+    traced_model = torch.jit.trace(model, dummy_input)
+    traced_model.save(out_path)
+
+    size_mb = os.path.getsize(out_path) / 1024 ** 2
+    print(f"Готово. Размер: {size_mb:.4f} МБ")
+    return traced_model
+
+
 # ЗАПУСК
 if __name__ == "__main__":
     torch.manual_seed(SEED)
@@ -268,3 +283,6 @@ if __name__ == "__main__":
 
 
     evaluate_vanilla(model, X_test, Y_test, normalizer)
+
+    evaluate_vanilla(model, X_test, Y_test, normalizer)
+    save_to_torchscript(model, DEVICE, "vanilla_scripted.pt")
