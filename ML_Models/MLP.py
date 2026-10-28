@@ -1,3 +1,6 @@
+import torch
+import torch.nn as nn
+
 class MLP(nn.Module):
     """Полносвязная нейронная сеть"""
     def __init__(self, in_dim, out_dim=1, width=64, depth=4, activation=nn.Tanh):
