@@ -3,6 +3,18 @@ import time
 
 
 def calculate_errors(y_true: np.ndarray, y_pred: np.ndarray, is_energy: bool = False):
+    """Вычисляет относительную ошибку между истинными и предсказанными значениями.
+
+    Args:
+        y_true (np.ndarray): Истинные значения.
+        y_pred (np.ndarray): Предсказанные значения.
+        is_energy (bool, optional): Если True, используется знаменатель
+            `|y_true| + 1.0` (для энергии); иначе — `|y_true|`.
+            По умолчанию False.
+
+    Returns:
+        np.ndarray: Массив относительных ошибок той же формы, что и входные массивы.
+    """
     if is_energy:
         error = np.abs(y_pred - y_true) / (np.abs(y_true) + 1.0)
     else:
@@ -11,6 +23,16 @@ def calculate_errors(y_true: np.ndarray, y_pred: np.ndarray, is_energy: bool = F
 
 
 def calculate_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Вычисляет коэффициент детерминации R².
+
+    Args:
+        y_true (np.ndarray): Истинные значения.
+        y_pred (np.ndarray): Предсказанные значения.
+
+    Returns:
+        float: Значение R². Если общая сумма квадратов равна нулю,
+            возвращается `float("nan")`.
+    """
     ss_res = np.sum((y_true - y_pred) ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
     if ss_tot == 0:
@@ -19,6 +41,29 @@ def calculate_r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 
 def evaluate_model(model_predict_func, ds_test: dict, normalizer, name: str = "Model"):
+    """Оценивает модель уравнения состояния на тестовых данных.
+
+    Выполняет предсказание, переводит нормализованные значения в физические,
+    вычисляет метрики ошибок для давления и энергии (MAPE, медиана, p99,
+    RMSE, NRMSE, R², log R²), а также время инференса и пропускную способность.
+    Выводит метрики в стандартный поток вывода.
+
+    Args:
+        model_predict_func (callable): Функция предсказания, принимающая
+            нормализованные `rho` и `T` (форма (N,)) и возвращающая кортеж
+            нормализованных `(P_pred, E_pred)`.
+        ds_test (dict): Словарь тестовых данных с ключами 'rho', 'T', 'P', 'E'
+            (нормализованные одномерные массивы).
+        normalizer (EOSNormalizer): Объект нормализации с методами
+            `inverse_transform_P` и `inverse_transform_E`.
+        name (str, optional): Имя модели для вывода и поля `model_name`.
+            По умолчанию "Model".
+
+    Returns:
+        dict: Словарь с метриками модели, включая `model_name`, ошибки и
+            скорости для давления и энергии, `Inference_time_s`,
+            `Throughput_qps`.
+    """
     rho_n = ds_test["rho"]
     T_n = ds_test["T"]
     P_n = ds_test["P"]
@@ -91,6 +136,25 @@ def evaluate_model(model_predict_func, ds_test: dict, normalizer, name: str = "M
 
 
 def benchmark_throughput(model_predict_func, n_queries=100_000, rho_range=(0.001, 10000), T_range=(0.1, 1e7)):
+    """Замеряет пропускную способность функции предсказания на случайных данных.
+
+    Генерирует `n_queries` случайных точек в заданных диапазонах `rho` и `T`,
+    выполняет предсказание и измеряет общее время. Выводит время и число
+    запросов в секунду.
+
+    Args:
+        model_predict_func (callable): Функция предсказания, принимающая
+            массивы `rho` и `T` формы (N,).
+        n_queries (int, optional): Количество случайных запросов.
+            По умолчанию 100_000.
+        rho_range (tuple[float, float], optional): Диапазон случайных значений
+            плотности `(min, max)`. По умолчанию (0.001, 10000).
+        T_range (tuple[float, float], optional): Диапазон случайных значений
+            температуры `(min, max)`. По умолчанию (0.1, 1e7).
+
+    Returns:
+        float: Общее время выполнения предсказания в секундах.
+    """
     rho_rand = np.random.uniform(rho_range[0], rho_range[1], n_queries)
     T_rand = np.random.uniform(T_range[0], T_range[1], n_queries)
 

@@ -5,9 +5,23 @@ from src.config import DATA_DIR, N_FILES
 
 
 class EOSRegion:
-    """Класс для хранения одной области (OblXX.txt)"""
+    """Класс для хранения одной области уравнения состояния (файл OblXX.txt).
+
+    Содержит одномерные массивы уникальных значений плотности и температуры,
+    а также двумерные массивы давления и энергии на сетке (T, rho).
+    """
 
     def __init__(self, name: str, rho: np.ndarray, T: np.ndarray, P: np.ndarray, E: np.ndarray, grid_type: str):
+        """Инициализирует область уравнения состояния.
+
+        Args:
+            name (str): Имя области (например, "Obl01").
+            rho (np.ndarray): Одномерный массив уникальных значений плотности.
+            T (np.ndarray): Одномерный массив уникальных значений температуры.
+            P (np.ndarray): Двумерный массив давления формы (n_T, n_rho).
+            E (np.ndarray): Двумерный массив энергии формы (n_T, n_rho).
+            grid_type (str): Тип сетки (например, "log-log").
+        """
         self.name = name
         self.rho = rho  # 1D массив уникальных rho
         self.T = T  # 1D массив уникальных T
@@ -16,12 +30,26 @@ class EOSRegion:
         self.grid_type = grid_type
 
     def __repr__(self):
+        """Возвращает строковое представление области.
+
+        Returns:
+            str: Строка вида "EOSRegion(name, rho: N, T: M)".
+        """
         return f"EOSRegion({self.name}, rho: {len(self.rho)}, T: {len(self.T)})"
 
 
 def load_raw_regions() -> list[EOSRegion]:
-    """
-    Читает 20 файлов Obl01.txt..Obl20.txt из DATA_DIR.
+    """Читает файлы Obl01.txt..Obl20.txt из DATA_DIR и возвращает список областей.
+
+    Для каждого файла определяется тип сетки из заголовка, данные читаются
+    как таблица, после чего восстанавливается двумерная сетка (T, rho)
+    для давления и энергии.
+
+    Returns:
+        list[EOSRegion]: Список объектов EOSRegion, по одному на каждый файл.
+
+    Raises:
+        FileNotFoundError: Если хотя бы один из файлов OblXX.txt отсутствует в DATA_DIR.
     """
     regions = []
 
@@ -66,8 +94,19 @@ def load_raw_regions() -> list[EOSRegion]:
 
 
 def load_flat_dataset() -> dict:
-    """
-    Собирает все области в один плоский датасет (1D массивы).
+    """Собирает все области в один плоский датасет (одномерные массивы).
+
+    Для каждой области создаются сетки (rho, T) с помощью np.meshgrid,
+    после чего значения давления и энергии, а также индекс области
+    разворачиваются в одномерные массивы и конкатенируются.
+
+    Returns:
+        dict: Словарь с ключами:
+            - 'rho' (np.ndarray): Плотность, форма (N,).
+            - 'T' (np.ndarray): Температура, форма (N,).
+            - 'P' (np.ndarray): Давление, форма (N,).
+            - 'E' (np.ndarray): Энергия, форма (N,).
+            - 'region' (np.ndarray): Индекс области для каждой точки, форма (N,).
     """
     regions = load_raw_regions()
 
