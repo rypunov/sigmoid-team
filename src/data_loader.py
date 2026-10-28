@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from config import DATA_DIR, N_FILES
+from src.config import DATA_DIR, N_FILES
 
 
 class EOSRegion:
