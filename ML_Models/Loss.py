@@ -4,6 +4,21 @@ from MLP import grad
 
 
 def eos_loss_fn(model, rho, T, p_target, e_target, normalizer):
+    """Физически-информированная функция потерь для уравнения состояния.
+
+       Args:
+           model (nn.Module): Нейросеть, принимающая (rho, T) и возвращающая
+                          (P, E) в нормализованных единицах.
+           rho (torch.Tensor): Нормализованные плотности формы ``(N, 1)``.
+           T (torch.Tensor): Нормализованные температуры формы ``(N, 1)``.
+           p_target (torch.Tensor): Целевые нормализованные давления ``(N, 1)``.
+           e_target (torch.Tensor): Целевые нормализованные энергии ``(N, 1)``.
+           normalizer: Объект нормализатора.
+
+       Returns:
+           dict[str, torch.Tensor]: Словарь с покомпонентными потерями:
+               ``{"pde", "bc", "ic", "L_C", "L_th"}.
+       """
     rho = rho.clone().requires_grad_(True)
     T = T.clone().requires_grad_(True)
 

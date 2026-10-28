@@ -9,6 +9,29 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class PINN_Model_Trainer:
+    """Тренер PINN-модели уравнения состояния.
+
+       Инкапсулирует данные, нормализатор, историю обучения и оценку
+       относительной L2-ошибки. Поддерживает двухэтапную схему:
+       оптимизация Adam → уточнение L-BFGS.
+
+       Args:
+           model (nn.Module): Обучаемая модель (обычно :class:`MLP`).
+           train_data (dict): Словарь с ключами ``"rho"``, ``"T"``, ``"P"``, ``"E"``
+               — массивы нормализованных тренировочных данных.
+           test_data (dict): Словарь той же структуры для тестовой выборки.
+           normalizer: Объект нормализатора EOS (нужен для обратного преобразования).
+           n_iters (int, optional): Число итераций Adam. Default: 30000.
+           batch_size (int, optional): Размер мини-батча для Adam. Default: 4096.
+
+       Attributes:
+           n_train (int): Размер тренировочной выборки.
+           rho_t, T_t, p_t, e_t (torch.Tensor): Полные тренировочные тензоры
+               на устройстве (``cuda``/``cpu``) формы ``(n_train, 1)``.
+           DEFAULT_SCALE (dict[str, float]): Веса компонентов лосса по умолчанию
+               ``{"pde": 1.0, "bc": 1.0, "ic": 0.01, "L_C": 0.01, "L_th": 0.01}``.
+       """
+
     def __init__(self, model, train_data, test_data, normalizer, n_iters=30000, batch_size=4096):
         self.model = model
         self.train_data = train_data
@@ -34,6 +57,30 @@ class PINN_Model_Trainer:
 
     def train(self, loss_fn, n_iters, lr=1e-3, extra_params=(), eval_fn=None, log_every=500, desc="train",
               scale=None):
+        """Обучает модель оптимизатором Adam с экспоненциальным расписанием.
+
+               Args:
+                   loss_fn (Callable[[], dict[str, torch.Tensor]]): Замыкание,
+                       возвращающее словарь покомпонентных потерь при каждом вызове
+                       (например, мини-батч из ``train_model``).
+                   n_iters (int): Число итераций обучения.
+                   lr (float, optional): Начальный learning rate. Default: ``1e-3``.
+                   extra_params (Iterable[nn.Parameter], optional): Дополнительные
+                       обучаемые параметры (например, логируемые веса лосса).
+                       Default: ``()``.
+                   eval_fn (Callable[[nn.Module], dict[str, float]], optional):
+                       Функция оценки метрик по модели, вызывается каждые
+                       ``log_every`` итераций. Default: ``None``.
+                   log_every (int, optional): Частота логирования/оценки. Default: 500.
+                   desc (str, optional): Подпись прогресс-бара ``tqdm``. Default: ``"train"``.
+                   scale (dict[str, float], optional): Веса компонентов лосса.
+                       Если ``None``, используется :attr:`DEFAULT_SCALE`.
+
+               Returns:
+                   dict[str, list]: История обучения, содержащая ключ ``"it"``
+                   (номера итераций), ``"loss_<term>"`` для каждого компонента лосса
+                   и, при наличии ``eval_fn``, — его метрики.
+               """
         scale = scale or self.DEFAULT_SCALE
         params = list(self.model.parameters()) + list(extra_params)
         optimizer = torch.optim.Adam(params, lr=lr)
@@ -62,6 +109,29 @@ class PINN_Model_Trainer:
         return history
 
     def train_lbfgs(self, loss_fn, max_iter=3000, eval_fn=None, log_every=50, history=None, scale=None):
+        """Уточняет модель оптимизатором L-BFGS (strong Wolfe line search).
+
+               Выполняет ``max_iter`` внешних шагов, каждый по ``log_every``
+               внутренних итераций L-BFGS, с логированием потерь и метрик.
+
+               Args:
+                   loss_fn (Callable[[], torch.Tensor]): Замыкание, возвращающее
+                       суммарный (взвешенный) лосс; используется внутри ``closure``
+                       для L-BFGS.
+                   max_iter (int, optional): Максимальное число внутренних итераций
+                       L-BFGS. Default: 3000.
+                   eval_fn (Callable[[nn.Module], dict[str, float]], optional):
+                       Функция метрик, вызываемая на каждом внешнем шаге. Default: ``None``.
+                   log_every (int, optional): Число внутренних итераций на один внешний
+                       шаг, а также шаг логирования. Default: 50.
+                   history (dict, optional): Ранее накопленная история (от Adam).
+                       Если ``None``, создаётся новая. Default: ``None``.
+                   scale (dict[str, float], optional): Веса компонентов лосса.
+                       Если ``None``, используется :attr:`DEFAULT_SCALE`.
+               Returns:
+                   dict[str, list]: Дополненная история обучения (те же ключи, что и
+                   у :meth:`train`).
+               """
         scale = scale or self.DEFAULT_SCALE
         lbfgs = torch.optim.LBFGS(
             self.model.parameters(), lr=1.0, max_iter=log_every,
@@ -101,16 +171,46 @@ class PINN_Model_Trainer:
         return history
 
     def rel_l2(self, pred, exact):
+        """Относительная L2-ошибка ``||pred − exact|| / ||exact||``.
+                Args:
+                    pred (np.ndarray): Предсказанные значения.
+                    exact (np.ndarray): Эталонные значения.
+
+                Returns:
+                    float: Относительная L2-ошибка (добавлено ``1e-5`` к знаменателю
+                    для устойчивости при ``||exact|| ~ 0``).
+                """
         return float(np.linalg.norm(pred - exact) / (np.linalg.norm(exact) + 1e-5))
 
     @torch.no_grad()
     def predict_eos(self, model, rho_np, T_np):
+        """Предсказание ``(P, E)`` по нормализованным ``(rho, T)``.
+
+                Args:
+                    model (nn.Module): Модель для предсказания.
+                    rho_np (np.ndarray): Нормализованные плотности формы ``(N,)``.
+                    T_np (np.ndarray): Нормализованные температуры формы ``(N,)``.
+
+                Returns:
+                    tuple[np.ndarray, np.ndarray]: Пара массивов ``(p_pred, e_pred)``
+                    формы ``(N,)`` в нормализованных единицах (CPU, NumPy).
+                """
         rho_t = torch.tensor(rho_np, dtype=torch.float32, device=device).unsqueeze(1)
         T_t   = torch.tensor(T_np,   dtype=torch.float32, device=device).unsqueeze(1)
         preds = model(torch.cat([rho_t, T_t], dim=1)).cpu().numpy()
         return preds[:, 0], preds[:, 1]
 
     def eval_fn(self, m):
+        """Вычисляет метрики relative-L2 на train и test выборках.
+
+               Args:
+                   m (nn.Module): Оцениваемая модель.
+
+               Returns:
+                   dict[str, float]: Метрики ``{"error_P", "error_E",
+                   "train_error_P", "train_error_E"}`` в **физических** единицах
+                   (после обратного преобразования нормализатором).
+               """
         p_pred, e_pred = self.predict_eos(m, self.test_data['rho'], self.test_data['T'])
         P_pred_phys = self.normalizer.inverse_transform_P(p_pred)
         E_pred_phys = self.normalizer.inverse_transform_E(e_pred)
@@ -133,6 +233,22 @@ class PINN_Model_Trainer:
         return result
 
     def train_model(self, desc="EOS PINN"):
+        """Полный цикл обучения PINN: Adam и L-BFGS + визуализация.
+
+                Этап 1 — ``n_iters`` итераций Adam на случайных мини-батчах.
+                Этап 2 — ``500`` итераций L-BFGS на фиксированной подвыборке
+                (до 100 000 точек). По завершении печатает итоговые relative-L2
+                ошибки, рисует кривые обучения и возвращает историю.
+
+                Args:
+                    desc (str, optional): Подпись прогресс-бара для этапа Adam.
+                        Default: ``"EOS PINN"``.
+
+                Returns:
+                    dict[str, list]: История обучения с ключами
+                    ``"it"``, ``"loss_*"``, ``"error_P"``, ``"error_E"``,
+                    ``"train_error_P"``, ``"train_error_E"``.
+                """
         torch.manual_seed(0)
 
         def loss_fn_adam():
@@ -184,6 +300,7 @@ class PINN_Model_Trainer:
         return history
 
     def visualization_train_res(self):
+        """Визуализирует качество модели на тестовой выборке."""
         p_pred, e_pred = self.predict_eos(self.model, self.test_data['rho'], self.test_data['T'])
         P_pred_phys = self.normalizer.inverse_transform_P(p_pred)
         E_pred_phys = self.normalizer.inverse_transform_E(e_pred)
