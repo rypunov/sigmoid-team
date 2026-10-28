@@ -267,7 +267,7 @@ if __name__ == "__main__":
 
     normalizer = prepared["normalizer"]
 
-    model = MLP(in_dim=2, out_dim=2, width=64, depth=4).to(DEVICE)
+    model = MLP(in_dim=2, out_dim=2, width=128, depth=5, activation=nn.GELU).to(DEVICE)
 
 
     train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test)

@@ -1,9 +1,12 @@
 import torch
 import torch.nn as nn
 
+from ML_Models.PINN_Al import device
+
+
 class MLP(nn.Module):
     """Полносвязная нейронная сеть"""
-    def __init__(self, in_dim, out_dim=1, width=64, depth=4, activation=nn.Tanh):
+    def __init__(self, in_dim=2, out_dim=2, width=128, depth=5, activation=nn.GELU):
         super().__init__()
         layers, d = [], in_dim
         for _ in range(depth):
