@@ -9,16 +9,16 @@ class BilinearEOS:
     def __init__(self):
         self.interpolators_P = []
         self.interpolators_E = []
-        self.bounds = []  # Границы областей (rho_min, rho_max, T_min, T_max)
+        self.bounds = []
 
     def fit(self, regions: list):
-        """
-        Обучает интерполяторы на всех 20 областях.
-        """
         for r in regions:
-            # RegularGridInterpolator ожидает (points, values), где values имеет форму сетки
-            interp_P = RegularGridInterpolator((r.T, r.rho), r.P, method='linear', bounds_error=False, fill_value=None)
-            interp_E = RegularGridInterpolator((r.T, r.rho), r.E, method='linear', bounds_error=False, fill_value=None)
+            interp_P = RegularGridInterpolator(
+                (r.T, r.rho), r.P, method="linear", bounds_error=False, fill_value=None
+            )
+            interp_E = RegularGridInterpolator(
+                (r.T, r.rho), r.E, method="linear", bounds_error=False, fill_value=None
+            )
 
             self.interpolators_P.append(interp_P)
             self.interpolators_E.append(interp_E)
@@ -28,15 +28,16 @@ class BilinearEOS:
             })
 
     def predict(self, rho: np.ndarray, T: np.ndarray):
-        """
-        Предсказывает P и E.
-        Использует векторизованный подход для скорости.
-        """
         P_out = np.zeros_like(rho)
         E_out = np.zeros_like(rho)
 
-        # Проходим по каждой точке (для надежности, на 100к точек это займет пару секунд)
-        # В идеале можно сделать группировку по областям, но для хакатона сойдет.
+        centers = np.array([
+            (b["rho_min"] + b["rho_max"]) / 2 for b in self.bounds
+        ]), np.array([
+            (b["T_min"] + b["T_max"]) / 2 for b in self.bounds
+        ])
+        rho_centers, T_centers = centers
+
         for i in range(len(rho)):
             found = False
             for idx, b in enumerate(self.bounds):
@@ -48,10 +49,11 @@ class BilinearEOS:
                     break
 
             if not found:
-                # Если точка вне всех областей (на границе), берем первую область (заглушка)
-                # В реальности тут нужно аккуратно обрабатывать, но для бейзлайна сойдет.
-                P_out[i] = 0.0
-                E_out[i] = 0.0
+                dists = (rho[i] - rho_centers) ** 2 + (T[i] - T_centers) ** 2
+                nearest = int(np.argmin(dists))
+                pt = np.array([[T[i], rho[i]]])
+                P_out[i] = self.interpolators_P[nearest](pt)[0]
+                E_out[i] = self.interpolators_E[nearest](pt)[0]
 
         return P_out, E_out
 
