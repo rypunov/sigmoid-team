@@ -22,7 +22,7 @@ from MLP import MLP
 SEED = 42
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-EPOCHS = 5000
+EPOCHS = 30000
 BATCH_SIZE = 4096
 LR = 1e-3
 
@@ -284,5 +284,4 @@ if __name__ == "__main__":
 
     evaluate_vanilla(model, X_test, Y_test, normalizer)
 
-    evaluate_vanilla(model, X_test, Y_test, normalizer)
     save_to_torchscript(model, DEVICE, "vanilla_scripted.pt")
