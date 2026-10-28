@@ -175,16 +175,15 @@ if __name__ == "__main__":
     print("Разбиение и нормализация")
     prepared = split_and_prepare(ds)
 
-    try:
-        X_train = prepared["train"]["X"].to(DEVICE)
-        Y_train = prepared["train"]["Y"].to(DEVICE)
-        X_test = prepared["test"]["X"].to(DEVICE)
-        Y_test = prepared["test"]["Y"].to(DEVICE)
-    except TypeError:
-        X_train, Y_train = prepared["train"]
-        X_test, Y_test = prepared["test"]
-        X_train, Y_train = X_train.to(DEVICE), Y_train.to(DEVICE)
-        X_test, Y_test = X_test.to(DEVICE), Y_test.to(DEVICE)
+    X_train = torch.stack([torch.tensor(prepared["train"]["rho"], dtype=torch.float32),
+                           torch.tensor(prepared["train"]["T"], dtype=torch.float32)], dim=1).to(DEVICE)
+    Y_train = torch.stack([torch.tensor(prepared["train"]["P"], dtype=torch.float32),
+                           torch.tensor(prepared["train"]["E"], dtype=torch.float32)], dim=1).to(DEVICE)
+
+    X_test = torch.stack([torch.tensor(prepared["test"]["rho"], dtype=torch.float32),
+                          torch.tensor(prepared["test"]["T"], dtype=torch.float32)], dim=1).to(DEVICE)
+    Y_test = torch.stack([torch.tensor(prepared["test"]["P"], dtype=torch.float32),
+                          torch.tensor(prepared["test"]["E"], dtype=torch.float32)], dim=1).to(DEVICE)
 
     normalizer = prepared["normalizer"]
 
