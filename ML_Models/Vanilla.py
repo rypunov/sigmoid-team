@@ -239,7 +239,7 @@ def save_to_torchscript(model, device, out_path="model_scripted.pt"):
     traced_model.save(out_path)
 
     size_mb = os.path.getsize(out_path) / 1024 ** 2
-    print(f"Готово. Размер: {size_mb:.4f} МБ")
+    print(f"Размер: {size_mb:.4f} МБ")
     return traced_model
 
 
