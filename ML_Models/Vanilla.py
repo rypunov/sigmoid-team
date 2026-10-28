@@ -1,5 +1,7 @@
 """
-Обучение Vanilla 
+Модуль обучения Vanilla MLP-модели для уравнения состояния алюминия.
+Скрипт выполняет загрузку данных, обучение нейросети, расчет физических
+производных, визуализацию ошибок и экспорт модели в TorchScript.
 """
 import sys
 from pathlib import Path
@@ -22,15 +24,29 @@ from MLP import MLP
 SEED = 42
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-EPOCHS = 5000
+EPOCHS = 30000
 BATCH_SIZE = 4096
 LR = 1e-3
 
-# ОБУЧЕНИЕ
+
 def train_model(model, X_train, Y_train, X_test, Y_test):
+    """
+    Обучает Vanilla MLP-модель на данных EOS с использованием Adam и MSE.
+
+    Args:
+        model (torch.nn.Module): Нейросетевая модель для обучения.
+        X_train (torch.Tensor): Входные признаки для обучения (N, 2), где 2 — это (rho, T).
+        Y_train (torch.Tensor): Целевые значения для обучения (N, 2), где 2 — это (P, E).
+        X_test (torch.Tensor): Входные признаки для валидации (M, 2).
+        Y_test (torch.Tensor): Целевые значения для валидации (M, 2).
+
+    Returns:
+        tuple[list, list]: Списки train и test потерь (MSE) по эпохам.
+    """
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     loss_fn = nn.MSELoss()
 
+    # Шедулер для плавного уменьшения learning rate (как в PINN)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9 ** (1 / 1000))
 
     n = len(X_train)
@@ -48,6 +64,7 @@ def train_model(model, X_train, Y_train, X_test, Y_test):
             loss.backward()
             optimizer.step()
 
+            # Шаг шедулера на каждом батче
             scheduler.step()
 
             total += loss.item() * len(idx)
@@ -66,21 +83,44 @@ def train_model(model, X_train, Y_train, X_test, Y_test):
     print(f"Веса сохранены в {MODEL_FILE}")
     return train_losses, test_losses
 
-# ПРОИЗВОДНЫЕ
+
 def compute_derivatives(model, X, n_points=5):
+    """
+    Вычисляет частные производные выходов модели по входам через torch.autograd.
+    Производные берутся по нормированным лог-осям (после Z-score нормализации).
+
+    Args:
+        model (torch.nn.Module): Обученная нейросетевая модель.
+        X (torch.Tensor): Тензор входных данных (N, 2) для выбора случайных точек.
+        n_points (int): Количество случайных точек для вычисления производных.
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]:
+            - x: входные точки (n_points, 2).
+            - grads: градиенты размера (n_points, 2, 2),
+              где grads[i, k, j] = d(выход k) / d(вход j).
+    """
     model.eval()
     idx = torch.randperm(len(X), device=DEVICE)[:n_points]
     x = X[idx].clone().requires_grad_(True)
     y = model(x)
 
     grads = []
-    for k in range(2): # k=0 -> P, k=1 -> e
+    for k in range(2):  # k=0 -> P, k=1 -> E
         g = torch.autograd.grad(y[:, k].sum(), x, retain_graph=True)[0]
         grads.append(g)
     grads = torch.stack(grads, dim=1)
     return x.detach(), grads.detach()
 
+
 def print_derivatives(points, grads):
+    """
+    Выводит в консоль значения частных производных в 5 случайных точках.
+
+    Args:
+        points (torch.Tensor): Тензор входных точек (n_points, 2).
+        grads (torch.Tensor): Тензор градиентов (n_points, 2, 2).
+    """
     print("\n Частные производные (по нормированным осям) ")
     for i in range(len(points)):
         r, t = points[i].cpu().numpy()
@@ -89,8 +129,15 @@ def print_derivatives(points, grads):
         print(f"   dP/drho_norm = {g[0, 0]: .5f}   dP/dT_norm = {g[0, 1]: .5f}")
         print(f"   dE/drho_norm = {g[1, 0]: .5f}   dE/dT_norm = {g[1, 1]: .5f}")
 
-# ВИЗУАЛИЗАЦИЯ
+
 def plot_learning_curve(train_losses, test_losses):
+    """
+    Строит и сохраняет график кривой обучения (MSE от эпохи).
+
+    Args:
+        train_losses (list): Список значений train-loss по эпохам.
+        test_losses (list): Список значений test-loss по эпохам.
+    """
     plt.figure(figsize=(7, 4))
     plt.plot(range(1, len(train_losses) + 1), train_losses, label="Train")
     plt.plot(range(1, len(test_losses) + 1), test_losses, label="Test")
@@ -104,7 +151,17 @@ def plot_learning_curve(train_losses, test_losses):
     plt.savefig("learning_curve_vanilla.png", dpi=150)
     plt.show()
 
+
 def plot_error_heatmap(model, X_test, Y_test, normalizer):
+    """
+    Строит тепловую карту абсолютной ошибки предсказаний P и E на тестовой выборке.
+
+    Args:
+        model (torch.nn.Module): Обученная модель.
+        X_test (torch.Tensor): Входные данные теста (M, 2).
+        Y_test (torch.Tensor): Целевые значения теста (M, 2).
+        normalizer (EOSNormalizer): Объект для обратного преобразования осей.
+    """
     model.eval()
     with torch.no_grad():
         pred = model(X_test)
@@ -125,7 +182,17 @@ def plot_error_heatmap(model, X_test, Y_test, normalizer):
     plt.savefig("error_heatmap_vanilla.png", dpi=150)
     plt.show()
 
+
 def plot_violation_map(model, X_test, normalizer):
+    """
+    Строит карту нарушений физических ограничений (P <= 0, dP/drho < 0, dE/dT < 0).
+    Нарушения отмечаются красным цветом.
+
+    Args:
+        model (torch.nn.Module): Обученная модель.
+        X_test (torch.Tensor): Входные данные теста (M, 2).
+        normalizer (EOSNormalizer): Объект для обратного преобразования.
+    """
     model.eval()
     x = X_test.clone().requires_grad_(True)
     y = model(x)
@@ -167,9 +234,23 @@ def plot_violation_map(model, X_test, normalizer):
     plt.show()
 
 
-# МЕТРИКИ ДЛЯ ТАБЛИЦЫ
 def evaluate_vanilla(model, X_test, Y_test, normalizer, n_speed=100_000,
                      out_path="vanilla_metrics.json"):
+    """
+    Вычисляет метрики качества (MAPE, R²), размер модели и скорость инференса.
+    Сохраняет результаты в JSON-файл.
+
+    Args:
+        model (torch.nn.Module): Обученная модель.
+        X_test (torch.Tensor): Входные данные теста (M, 2).
+        Y_test (torch.Tensor): Целевые значения теста (M, 2).
+        normalizer (EOSNormalizer): Объект для обратного пересчета в физические единицы.
+        n_speed (int): Количество запросов для замера скорости.
+        out_path (str): Путь для сохранения JSON с метриками.
+
+    Returns:
+        dict: Словарь с вычисленными метриками.
+    """
     p = normalizer.params
     model.eval()
 
@@ -177,7 +258,7 @@ def evaluate_vanilla(model, X_test, Y_test, normalizer, n_speed=100_000,
         pred = model(X_test).cpu().numpy()
     true = Y_test.cpu().numpy()
 
-    # физические единицы
+    # Физические единицы
     P_pred = np.power(10.0, pred[:, 0] * p["P"]["std"] + p["P"]["mean"]) - 1e-12
     P_true = np.power(10.0, true[:, 0] * p["P"]["std"] + p["P"]["mean"]) - 1e-12
     E_pred = pred[:, 1] * p["E"]["std"] + p["E"]["mean"]
@@ -192,7 +273,7 @@ def evaluate_vanilla(model, X_test, Y_test, normalizer, n_speed=100_000,
     ss_tot = np.sum((true[:, 0] - true[:, 0].mean()) ** 2)
     r2_P = 1 - ss_res / ss_tot
 
-    # скорость
+    # Скорость
     x = X_test[:n_speed]
     with torch.no_grad():
         model(x)  # прогрев
@@ -205,7 +286,7 @@ def evaluate_vanilla(model, X_test, Y_test, normalizer, n_speed=100_000,
         dt = time.perf_counter() - t0
     speed = len(x) / dt
 
-    # размер
+    # Размер
     size_mb = os.path.getsize(MODEL_FILE) / 1024 ** 2
 
     res = {
@@ -230,7 +311,16 @@ def evaluate_vanilla(model, X_test, Y_test, normalizer, n_speed=100_000,
 
 def save_to_torchscript(model, device, out_path="model_scripted.pt"):
     """
-    Сохраняет модель в TorchScript.
+    Экспортирует обученную PyTorch-модель в формат TorchScript.
+    Позволяет запускать модель без Python (например, в C++).
+
+    Args:
+        model (torch.nn.Module): Обученная модель.
+        device (str): Устройство (cpu/cuda) для создания dummy-входа.
+        out_path (str): Путь для сохранения .pt файла.
+
+    Returns:
+        torch.jit.ScriptModule: Трассированная модель TorchScript.
     """
     print(f"\nЭкспорт в TorchScript: {out_path}")
     model.eval()
@@ -269,19 +359,18 @@ if __name__ == "__main__":
 
     model = MLP(in_dim=2, out_dim=2, width=128, depth=5, activation=nn.GELU).to(DEVICE)
 
-
     train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test)
 
     print("Производные")
     pts, grads = compute_derivatives(model, X_test, n_points=5)
     print_derivatives(pts, grads)
 
-
     plot_learning_curve(train_losses, test_losses)
     plot_error_heatmap(model, X_test, Y_test, normalizer)
     plot_violation_map(model, X_test, normalizer)
 
-
+    # Вызов метрик (один раз!)
     evaluate_vanilla(model, X_test, Y_test, normalizer)
 
+    # Экспорт в TorchScript
     save_to_torchscript(model, DEVICE, "vanilla_scripted.pt")
