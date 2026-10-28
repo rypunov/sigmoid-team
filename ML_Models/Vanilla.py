@@ -10,16 +10,16 @@ import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
 
-from config import MODEL_FILE
-from data_loader import load_flat_dataset
-from preprocessor import split_and_prepare
+from src.config import MODEL_FILE
+from src.data_loader import load_flat_dataset
+from src.preprocessor import split_and_prepare
 from MLP import MLP
 
 # ПАРАМЕТРЫ ОБУЧЕНИЯ
 SEED = 42
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-EPOCHS = 10000
+EPOCHS = 5000
 BATCH_SIZE = 4096
 LR = 1e-3
 
@@ -55,7 +55,7 @@ def train_model(model, X_train, Y_train, X_test, Y_test):
         with torch.no_grad():
             test_losses.append(loss_fn(model(X_test), Y_test).item())
 
-        if epoch == 1 or epoch % 1000 == 0:
+        if epoch == 1 or epoch % 100 == 0:
             current_lr = scheduler.get_last_lr()[0]
             print(f"Эпоха {epoch:5d}/{EPOCHS} | train MSE={train_losses[-1]:.3e} | test MSE={test_losses[-1]:.3e} | LR={current_lr:.2e}")
 
@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
     model = MLP(in_dim=2, out_dim=2, width=64, depth=4).to(DEVICE)
 
-    print("10 000 эпох")
+
     train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test)
 
     print("Производные")
