@@ -83,15 +83,6 @@ cs = model.sound_speed(rho, T)
 flags = model.check_physics(rho, T)
 ```
 
-## 📚 Документация модулей
-
-Полные сопроводительные документы (PDF/Word) с описанием кода, графиками EDA и обоснованием физических ограничений находятся в папке `/docs`:
-
-- [Ссылка на README_Module1.md — Данные и бейзлайн]
-- [Ссылка на README_Module2.md — Vanilla MLP]
-- [Ссылка на README_Module3.md — PINN]
-- [Ссылка на README_Module4.md — Инференс и сжатие]
-
 ## 📂 Структура проекта
 
 ```text
@@ -102,5 +93,7 @@ sigmoid-team/
 ├── ML_Models/            # Архитектуры нейросетей (PyTorch)
 ├── src/                  # Исходный код, скрипты, обертки, метрики
 ├── requirements.txt      # Зависимости
+├── presentation.pdf      # Презентация
+├── report.pdf            # Технический отчет
 └── README.md             # Этот файл
 ```
