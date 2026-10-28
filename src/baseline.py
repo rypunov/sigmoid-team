@@ -6,12 +6,26 @@ from config import MODEL_DIR
 
 
 class BilinearEOS:
+    """Билинейная интерполяционная модель уравнения состояния.
+
+    Хранит набор интерполяторов для нескольких областей (регионов) и
+    позволяет предсказывать давление и энергию по плотности и температуре.
+    Для точек вне всех областей использует ближайший регион.
+    """
     def __init__(self):
+        """Инициализирует пустые списки интерполяторов и границ регионов."""
         self.interpolators_P = []
         self.interpolators_E = []
         self.bounds = []
 
     def fit(self, regions: list):
+        """Строит интерполяторы для каждой области.
+
+        Args:
+            regions (list): Список объектов, каждый из которых содержит атрибуты
+                `T` (np.ndarray), `rho` (np.ndarray), `P` (np.ndarray), `E` (np.ndarray).
+                Предполагается, что `P` и `E` заданы на сетке (T, rho).
+        """
         for r in regions:
             interp_P = RegularGridInterpolator(
                 (r.T, r.rho), r.P, method="linear", bounds_error=False, fill_value=None
@@ -28,6 +42,19 @@ class BilinearEOS:
             })
 
     def predict(self, rho: np.ndarray, T: np.ndarray):
+        """Предсказывает давление и энергию для заданных плотности и температуры.
+
+        Для каждой точки выбирается регион, содержащий её; если такого нет,
+        используется регион, ближайший по центру.
+    
+        Args:
+            rho (np.ndarray): Плотность, форма (N,).
+            T (np.ndarray): Температура, форма (N,).
+    
+        Returns:
+            tuple: Кортеж (P_out, E_out) с предсказанными давлением и энергией,
+                каждый массив формы (N,).
+        """
         P_out = np.zeros_like(rho)
         E_out = np.zeros_like(rho)
 
@@ -58,10 +85,25 @@ class BilinearEOS:
         return P_out, E_out
 
     def save(self, path=MODEL_DIR / "baseline.pkl"):
+        """Сохраняет объект в файл с помощью pickle.
+
+        Args:
+            path (str or Path, optional): Путь для сохранения.
+                По умолчанию MODEL_DIR / "baseline.pkl".
+        """
         with open(path, "wb") as f:
             pickle.dump(self, f)
 
     @classmethod
     def load(cls, path=MODEL_DIR / "baseline.pkl"):
+        """Загружает объект из файла pickle.
+
+        Args:
+            path (str or Path, optional): Путь к файлу.
+                По умолчанию MODEL_DIR / "baseline.pkl".
+    
+        Returns:
+            BilinearEOS: Загруженный объект.
+        """
         with open(path, "rb") as f:
             return pickle.load(f)
