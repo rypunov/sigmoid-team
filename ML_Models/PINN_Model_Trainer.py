@@ -9,7 +9,22 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class PINN_Model_Trainer:
+    """Тренер для обучения PINN модели уравнения состояния.
+
+    Управляет процессом обучения, оценкой и визуализацией результатов.
+    Хранит данные, нормализатор и гиперпараметры обучения.
+    """
     def __init__(self, model, train_data, test_data, normalizer, n_iters=5000, batch_size=2048):
+        """Инициализирует тренер.
+
+        Args:
+            model (nn.Module): Обучаемая модель.
+            train_data (dict): Словарь с ключами 'rho', 'T', 'P', 'E' для обучающей выборки.
+            test_data (dict): Словарь с ключами 'rho', 'T', 'P', 'E' для тестовой выборки.
+            normalizer (EOSNormalizer): Объект нормализации с методами inverse_transform_P и inverse_transform_E.
+            n_iters (int, optional): Количество итераций обучения. По умолчанию 5000.
+            batch_size (int, optional): Размер батча. По умолчанию 2048.
+        """
         self.model = model
         self.train_data = train_data
         self.test_data = test_data
@@ -26,6 +41,23 @@ class PINN_Model_Trainer:
 
     def train(self, loss_fn, n_iters, lr=1e-3, extra_params=(), eval_fn=None, log_every=500, desc="train",
               scale={'pde': 1.0, 'bc': 1.0, 'ic': 0.01, 'L_C': 0.01, 'L_th': 0.01}):
+        """Выполняет обучение модели.
+
+        Args:
+            loss_fn (callable): Функция без аргументов, возвращающая словарь компонентов лосса.
+            n_iters (int): Количество итераций обучения.
+            lr (float, optional): Скорость обучения. По умолчанию 1e-3.
+            extra_params (iterable, optional): Дополнительные параметры для оптимизатора. По умолчанию ().
+            eval_fn (callable, optional): Функция оценки, принимающая модель и возвращающая словарь метрик.
+                По умолчанию None.
+            log_every (int, optional): Частота логирования. По умолчанию 500.
+            desc (str, optional): Описание прогресс-бара. По умолчанию "train".
+            scale (dict, optional): Веса для компонентов лосса.
+                По умолчанию {'pde': 1.0, 'bc': 1.0, 'ic': 0.01, 'L_C': 0.01, 'L_th': 0.01}.
+    
+        Returns:
+            dict: История обучения с ключами "it" и метриками.
+        """
         params = list(self.model.parameters()) + list(extra_params)
         optimizer = torch.optim.Adam(params, lr=lr)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9 ** (1 / 1000))
@@ -52,16 +84,44 @@ class PINN_Model_Trainer:
         return history
 
     def rel_l2(self, pred, exact):
+        """Вычисляет относительную ошибку L2 между предсказанием и точным значением.
+
+        Args:
+            pred (np.ndarray): Предсказанные значения.
+            exact (np.ndarray): Точные значения.
+    
+        Returns:
+            float: Относительная ошибка L2.
+        """
         return float(np.linalg.norm(pred - exact) / (np.linalg.norm(exact) + 1e-12))
 
     @torch.no_grad()
     def predict_eos(self, model, rho_np, T_np):
+        """Предсказывает давление и энергию для заданных плотности и температуры.
+
+        Args:
+            model (nn.Module): Модель для предсказания.
+            rho_np (np.ndarray): Нормализованная плотность, форма (N,).
+            T_np (np.ndarray): Нормализованная температура, форма (N,).
+    
+        Returns:
+            tuple: Кортеж (P_pred, E_pred) с предсказанными нормализованными
+                давлением и энергией, форма (N,).
+        """
         rho_t = torch.tensor(rho_np, dtype=torch.float32, device=device).unsqueeze(1)
         T_t = torch.tensor(T_np, dtype=torch.float32, device=device).unsqueeze(1)
         preds = model(torch.cat([rho_t, T_t], dim=1)).cpu().numpy()
         return preds[:, 0], preds[:, 1]
 
     def eval_fn(self, m):
+        """Вычисляет метрики ошибки на тестовых данных.
+
+        Args:
+            m (nn.Module): Модель для оценки.
+    
+        Returns:
+            dict: Словарь с относительными ошибками "error_P" и "error_E".
+        """
         p_pred, e_pred = self.predict_eos(m, self.test_data['rho'], self.test_data['T'])
         P_pred_phys = self.normalizer.inverse_transform_P(p_pred)
         E_pred_phys = self.normalizer.inverse_transform_E(e_pred)
@@ -75,6 +135,14 @@ class PINN_Model_Trainer:
         }
 
     def train_model(self, desc="EOS PINN"):
+        """Запускает обучение модели с заданными параметрами и визуализирует историю.
+
+        Args:
+            desc (str, optional): Описание прогресс-бара. По умолчанию "EOS PINN".
+    
+        Returns:
+            dict: История обучения.
+        """
         torch.manual_seed(0)
 
         def loss_fn():
@@ -105,6 +173,11 @@ class PINN_Model_Trainer:
         return history
 
     def visualization_train_res(self):
+        """Визуализирует результаты обучения на тестовых данных.
+
+        Строит три графика: точное давление, относительная ошибка давления,
+        относительная ошибка энергии в зависимости от плотности и температуры.
+        """
         p_pred, e_pred = self.predict_eos(self.model, self.test_data['rho'], self.test_data['T'])
         P_pred_phys = self.normalizer.inverse_transform_P(p_pred)
         E_pred_phys = self.normalizer.inverse_transform_E(e_pred)
