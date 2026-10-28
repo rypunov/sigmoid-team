@@ -58,7 +58,7 @@ class PINN_Model_Trainer:
     def predict_eos(self, model, rho_np, T_np):
         rho_t = torch.tensor(rho_np, dtype=torch.float32, device=device).unsqueeze(1)
         T_t = torch.tensor(T_np, dtype=torch.float32, device=device).unsqueeze(1)
-        preds = model(rho_t, T_t).cpu().numpy()
+        preds = model(torch.cat([rho_t, T_t], dim=1)).cpu().numpy()
         return preds[:, 0], preds[:, 1]
 
     def eval_fn(self, m):

@@ -1,52 +1,81 @@
-import torch
-from MLP import grad
-
-
 # ==========================================
 # 4. Функция потерь (данные + термодинамика)
 # ==========================================
-def eos_loss_fn(model, rho, T, p_target, e_target, weights=None):
-    """
-    rho, T, p_target, e_target: тензоры размера [batch_size, 1]
-    """
-    if weights is None:
-        # Веса для балансировки слагаемых (подбираются эмпирически)
-        weights = {"L_e": 1.0, "L_p": 1.0, "L_mod": 1e-3, "L_C": 1e-3, "L_th": 1e-3}
+import torch
+import math
+from MLP import grad
 
-    # Включаем автоградиент для входных переменных
+
+def eos_loss_fn(model, rho, T, p_target, e_target, normalizer):
+    """
+    Вычисляет 5 компонентов функции потерь для уравнения состояния.
+    rho, T, p_target, e_target: нормализованные тензоры размера [batch_size, 1]
+    normalizer: объект EOSNormalizer
+    """
     rho.requires_grad_(True)
     T.requires_grad_(True)
 
-    # Прямой проход (p*, e*)
-    preds = model(rho, T)
+    # 1. Прямой проход (склеиваем rho и T в один тензор [batch, 2])
+    preds = model(torch.cat([rho, T], dim=1))
     p_pred = preds[:, 0:1]
     e_pred = preds[:, 1:2]
 
-    # Вычисление частных производных
-    dp_drho = grad(p_pred.sum(), rho)
-    dp_dT = grad(p_pred.sum(), T)
-    de_drho = grad(e_pred.sum(), rho)
-    de_dT = grad(e_pred.sum(), T)
+    # 2. Частные производные по НОРМАЛИЗОВАННЫМ переменным
+    dp_drho_n = grad(p_pred.sum(), rho)
+    dp_dT_n = grad(p_pred.sum(), T)
+    de_drho_n = grad(e_pred.sum(), rho)
+    de_dT_n = grad(e_pred.sum(), T)
 
-    # 1. Ошибка по энергии: L_e = sum((e* - e)^2) / sum(e^2)
-    L_e = torch.sum((e_pred - e_target) ** 2) / (torch.sum(e_target ** 2) + 1e-8)
+    # 3. Достаем параметры нормализации (используем .params)
+    sig_rho = normalizer.params["rho"]["std"]
+    sig_T = normalizer.params["T"]["std"]
+    sig_P = normalizer.params["P"]["std"]
+    sig_E = normalizer.params["E"]["std"]
 
-    # 2. Ошибка по давлению: L_p = sum((p* - p)^2) / sum(p^2)
-    L_p = torch.sum((p_pred - p_target) ** 2) / (torch.sum(p_target ** 2) + 1e-8)
+    mu_rho = normalizer.params["rho"]["mean"]
+    mu_T = normalizer.params["T"]["mean"]
+    mu_P = normalizer.params["P"]["mean"]
 
-    # 3. Механическая стабильность: L_mod = sum(max(0, -dp*/drho)^2)
-    L_mod = torch.sum(torch.relu(-dp_drho) ** 2)
+    # 4. Восстанавливаем физические переменные для уравнений
+    # (rho и P были логарифмированы по основанию 10)
+    ln10 = math.log(10)
+    rho_phys = torch.pow(10.0, rho * sig_rho + mu_rho) - 1e-12
+    T_phys = T * sig_T + mu_T
+    P_phys = torch.pow(10.0, p_pred * sig_P + mu_P) - 1e-12
 
-    # 4. Положительная теплоемкость: L_C = sum(max(0, -de*/dT)^2)
-    L_C = torch.sum(torch.relu(-de_dT) ** 2)
+    # 5. Пересчет производных в физические величины (Chain Rule)
+    # T * dP/dT = T * (P * ln(10) * sig_P / sig_T) * dp_dT_n
+    T_dP_dT = T_phys * (P_phys * ln10 * sig_P / sig_T) * dp_dT_n
 
-    # 5. Термодинамическая согласованность:
-    # L_th = sum( (T * dp*/dT + rho^2 * de*/drho - p*)^2 ) / sum(p^2)
-    residual_th = T * dp_dT + (rho ** 2) * de_drho - p_pred
-    L_th = torch.sum(residual_th ** 2) / (torch.sum(p_target ** 2) + 1e-8)
+    # rho^2 * dE/drho = rho^2 * (sig_E / (ln(10) * rho * sig_rho)) * de_drho_n
+    rho2_dE_drho = rho_phys * (sig_E / (ln10 * sig_rho)) * de_drho_n
 
-    # Итоговая функция потерь
-    total_loss = (weights["L_e"] * L_e + weights["L_p"] * L_p + weights["L_mod"] * L_mod +
-                  weights["L_C"] * L_C + weights["L_th"] * L_th)
+    # dP/drho (для проверки стабильности)
+    dP_drho_phys = P_phys * (sig_P / (ln10 * sig_rho * rho_phys)) * dp_drho_n
 
-    return {"total": total_loss, "L_e": L_e, "L_p": L_p, "L_mod": L_mod, "L_C": L_C, "L_th": L_th}
+    # 6. Вычисление 5 слагаемых лосса
+    # Ошибка по давлению (в нормализованном пространстве)
+    L_p = torch.mean((p_pred - p_target) ** 2)
+
+    # Ошибка по энергии (в нормализованном пространстве)
+    L_e = torch.mean((e_pred - e_target) ** 2)
+
+    # Механическая стабильность: max(0, -dP/drho)^2
+    L_mod = torch.mean(torch.relu(-dP_drho_phys) ** 2)
+
+    # Теплоемкость: max(0, -dE/dT)^2.
+    # Т.к. sig_E, sig_T > 0, знак de_dT_n совпадает со знаком dE/dT
+    L_C = torch.mean(torch.relu(-de_dT_n) ** 2)
+
+    # Термодинамическая согласованность (Уравнение Максвелла)
+    residual_th = T_dP_dT + rho2_dE_drho - P_phys
+    L_th = torch.mean(residual_th ** 2) / (torch.mean(P_phys ** 2) + 1e-8)
+
+    # Возвращаем словарь с ключами, которые ожидает Trainer (pde, bc, ic)
+    return {
+        "pde": L_p,  # L_p
+        "bc": L_e,  # L_e
+        "ic": L_mod,  # L_mod
+        "L_C": L_C,
+        "L_th": L_th
+    }
