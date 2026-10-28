@@ -22,7 +22,7 @@ from MLP import MLP
 SEED = 42
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-EPOCHS = 30000
+EPOCHS = 5000
 BATCH_SIZE = 4096
 LR = 1e-3
 
