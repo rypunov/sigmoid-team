@@ -7,10 +7,23 @@ from MLP import grad
 
 
 def eos_loss_fn(model, rho, T, p_target, e_target, normalizer):
-    """
-    Вычисляет 5 компонентов функции потерь для уравнения состояния.
-    rho, T, p_target, e_target: нормализованные тензоры размера [batch_size, 1]
-    normalizer: объект EOSNormalizer
+    """Вычисляет пять компонентов функции потерь для уравнения состояния.
+
+        Args:
+            model (torch.nn.Module): Модель, принимающая тензор [batch, 2] и возвращающая [batch, 2].
+            rho (torch.Tensor): Нормализованная плотность, форма [batch, 1]. Включается requires_grad.
+            T (torch.Tensor): Нормализованная температура, форма [batch, 1]. Включается requires_grad.
+            p_target (torch.Tensor): Целевое нормализованное давление, форма [batch, 1].
+            e_target (torch.Tensor): Целевая нормализованная энергия, форма [batch, 1].
+            normalizer (EOSNormalizer): Объект с параметрами нормализации (mean, std) для rho, T, P, E.
+
+        Returns:
+            dict: Словарь с компонентами потерь:
+                - "pde" (torch.Tensor): MSE по давлению.
+                - "bc" (torch.Tensor): MSE по энергии.
+                - "ic" (torch.Tensor): Штраф за механическую стабильность.
+                - "L_C" (torch.Tensor): Штраф за теплоёмкость.
+                - "L_th" (torch.Tensor): Штраф за термодинамическую согласованность.
     """
     rho.requires_grad_(True)
     T.requires_grad_(True)
